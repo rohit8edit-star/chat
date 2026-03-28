@@ -36,6 +36,17 @@ export const getOtherUsers = async (uid: string) => {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 };
 
+// ✅ NEW: Phone number se user dhundho
+export const getUserByPhone = async (phoneNumber: string) => {
+  const q = query(
+    collection(db, "users"),
+    where("phoneNumber", "==", phoneNumber),
+  );
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  return { id: snap.docs[0].id, ...snap.docs[0].data() };
+};
+
 // --- Chats ---
 export const getUserChats = async (uid: string) => {
   const q = query(
@@ -45,6 +56,7 @@ export const getUserChats = async (uid: string) => {
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 };
+
 export const subscribeToUserChatsWithDetails = (
   uid: string,
   callback: (chats: any[]) => void,
