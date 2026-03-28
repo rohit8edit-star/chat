@@ -1,34 +1,26 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState } from "react";
 import {
   loginWithGoogle,
   loginWithEmail,
   registerWithEmail,
-  sendPhoneOTP,
-  verifyPhoneOTP,
+  sendEmailVerification,
+  resendVerificationEmail,
 } from "../lib/auth";
-import { getUser, createUser, getUserByPhone } from "../lib/db";
+import { getUser, createUser } from "../lib/db";
 import { useNavigate } from "react-router-dom";
-import { MessageCircle, Mail, Key, Phone, ArrowLeft, User } from "lucide-react";
+import { MessageCircle, Mail, Key, ArrowLeft, RefreshCw } from "lucide-react";
 
-type Tab = "login" | "signup" | "phone" | "otp" | "profile";
+type Tab = "login" | "signup" | "verify";
 
 export default function Auth() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<Tab>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [phoneNumber, setPhoneNumber] = useState("");
-  const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resent, setResent] = useState(false);
   const [pendingUser, setPendingUser] = useState<any>(null);
-  const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
-  const recaptchaRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    // Recaptcha div always in DOM
-  }, []);
 
   // --- Google Login ---
   const handleGoogleSignIn = async () => {
@@ -43,7 +35,7 @@ export default function Auth() {
           uid: user.uid,
           displayName: user.displayName || "User",
           email: user.email || "",
-          phoneNumber: user.phoneNumber || "",
+          phoneNumber: "",
           photoURL: user.photoURL || "",
           about: "Hey there! I am using NixChat.",
           status: "online",
@@ -58,102 +50,95 @@ export default function Auth() {
     }
   };
 
-  // --- Email Login/Signup ---
-  const handleEmailAuth = async (e: React.FormEvent) => {
+  // --- Email Login ---
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
     try {
-      if (activeTab === "login") {
-        await loginWithEmail(email, password);
-        navigate("/");
-      } else {
-        const result = await registerWithEmail(email, password);
-        const user = result.user;
-        await createUser(user.uid, {
-          uid: user.uid,
-          displayName: email.split("@")[0],
-          email: user.email || "",
-          phoneNumber: "",
-          photoURL: "",
-          about: "Hey there! I am using NixChat.",
-          status: "online",
-          lastSeen: new Date().toISOString(),
-        });
-        navigate("/");
-      }
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // --- Phone OTP Send ---
-  const handleSendOTP = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
-    try {
-      // Format: +91XXXXXXXXXX
-      const formatted = phoneNumber.startsWith("+")
-        ? phoneNumber
-        : `+91${phoneNumber}`;
-      await sendPhoneOTP(formatted, "recaptcha-container");
-      setActiveTab("otp");
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // --- OTP Verify ---
-  const handleVerifyOTP = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
-    try {
-      const otpCode = otp.join("");
-      const result = await verifyPhoneOTP(otpCode);
+      const result = await loginWithEmail(email, password);
       const user = result.user;
-      const userProfile = await getUser(user.uid);
 
-      if (!userProfile) {
-        // New user — go to profile setup
+      // Check email verified
+      if (!user.emailVerified) {
         setPendingUser(user);
-        setActiveTab("profile");
-      } else {
-        navigate("/");
+        setActiveTab("verify");
+        return;
       }
+
+      navigate("/");
     } catch (err: any) {
-      setError("Invalid OTP. Please try again.");
+      if (err.code === "auth/invalid-credential") {
+        setError("Email ya password galat hai.");
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  // --- Profile Setup ---
-  const handleProfileSetup = async (e: React.FormEvent) => {
+  // --- Email Signup ---
+  const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pendingUser) return;
     setError("");
     setLoading(true);
     try {
-      const formatted = phoneNumber.startsWith("+")
-        ? phoneNumber
-        : `+91${phoneNumber}`;
-      await createUser(pendingUser.uid, {
-        uid: pendingUser.uid,
-        displayName: displayName,
-        email: pendingUser.email || "",
-        phoneNumber: formatted,
+      const result = await registerWithEmail(email, password);
+      const user = result.user;
+
+      // Create user profile
+      await createUser(user.uid, {
+        uid: user.uid,
+        displayName: email.split("@")[0],
+        email: user.email || "",
+        phoneNumber: "",
         photoURL: "",
         about: "Hey there! I am using NixChat.",
         status: "online",
         lastSeen: new Date().toISOString(),
       });
-      navigate("/");
+
+      // Send verification email
+      await sendEmailVerification(user);
+      setPendingUser(user);
+      setActiveTab("verify");
+    } catch (err: any) {
+      if (err.code === "auth/email-already-in-use") {
+        setError("Ye email already registered hai. Login karo.");
+      } else if (err.code === "auth/weak-password") {
+        setError("Password kam se kam 6 characters ka hona chahiye.");
+      } else {
+        setError(err.message);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // --- Resend Verification Email ---
+  const handleResend = async () => {
+    if (!pendingUser) return;
+    try {
+      await resendVerificationEmail(pendingUser);
+      setResent(true);
+      setTimeout(() => setResent(false), 3000);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  // --- Check if email verified ---
+  const handleCheckVerified = async () => {
+    if (!pendingUser) return;
+    setLoading(true);
+    try {
+      await pendingUser.reload();
+      if (pendingUser.emailVerified) {
+        navigate("/");
+      } else {
+        setError("Email abhi verify nahi hui. Link check karo.");
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -161,140 +146,69 @@ export default function Auth() {
     }
   };
 
-  // --- OTP Input Handler ---
-  const handleOtpChange = (index: number, value: string) => {
-    if (value.length > 1) return;
-    const newOtp = [...otp];
-    newOtp[index] = value;
-    setOtp(newOtp);
-    if (value && index < 5) {
-      otpRefs.current[index + 1]?.focus();
-    }
-  };
-
-  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent) => {
-    if (e.key === "Backspace" && !otp[index] && index > 0) {
-      otpRefs.current[index - 1]?.focus();
-    }
-  };
-
   return (
     <div className="flex flex-col min-h-screen bg-[#0A0A0A] text-white p-6 justify-center">
-      {/* Recaptcha container — hidden */}
-      <div id="recaptcha-container" ref={recaptchaRef} className="hidden" />
-
       <div className="flex flex-col items-center mb-10">
         <MessageCircle size={64} className="text-[#2979FF] mb-4" />
         <h1 className="text-3xl font-bold">NixChat</h1>
-        <p className="text-[#8A8A8A] mt-2 text-center">
-          Chat. Connect. Nix.
-        </p>
+        <p className="text-[#8A8A8A] mt-2 text-center">Chat. Connect. Nix.</p>
       </div>
 
       <div className="w-full max-w-md mx-auto space-y-6">
 
-        {/* ── PHONE TAB ── */}
-        {activeTab === "phone" && (
-          <form onSubmit={handleSendOTP} className="space-y-4">
-            <button
-              type="button"
-              onClick={() => setActiveTab("login")}
-              className="flex items-center text-[#2979FF] mb-2"
-            >
-              <ArrowLeft size={18} className="mr-1" /> Back
-            </button>
-            <h2 className="text-xl font-bold">Enter Phone Number</h2>
-            <p className="text-[#8A8A8A] text-sm">
-              We'll send a 6-digit OTP to verify your number.
-            </p>
-            <div className="relative">
-              <Phone className="absolute left-3 top-3 text-[#8A8A8A]" size={20} />
-              <input
-                type="tel"
-                placeholder="+91 XXXXX XXXXX"
-                value={phoneNumber}
-                onChange={(e) => setPhoneNumber(e.target.value)}
-                className="w-full bg-[#1E1E1E] border border-[#2A2A2A] rounded-lg py-3 pl-10 pr-4 text-white placeholder-[#8A8A8A] focus:outline-none focus:border-[#2979FF]"
-                required
-              />
+        {/* ── EMAIL VERIFY SCREEN ── */}
+        {activeTab === "verify" && (
+          <div className="space-y-6 text-center">
+            <div className="bg-[#1E1E1E] rounded-2xl p-6">
+              <Mail size={48} className="text-[#2979FF] mx-auto mb-4" />
+              <h2 className="text-xl font-bold mb-2">Email Verify Karo</h2>
+              <p className="text-[#8A8A8A] text-sm">
+                <span className="text-white font-medium">{email}</span> pe
+                verification link bheja gaya hai.
+              </p>
+              <p className="text-[#8A8A8A] text-sm mt-2">
+                Link pe click karo phir neeche wala button dabao.
+              </p>
             </div>
-            {error && <p className="text-red-500 text-sm">{error}</p>}
+
+            {error && (
+              <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-sm p-3 rounded-xl">
+                {error}
+              </div>
+            )}
+
+            {resent && (
+              <div className="bg-green-500/10 border border-green-500/20 text-green-400 text-sm p-3 rounded-xl">
+                ✅ Email dobara bheja gaya!
+              </div>
+            )}
+
             <button
-              type="submit"
+              onClick={handleCheckVerified}
               disabled={loading}
               className="w-full bg-[#2979FF] hover:bg-[#1565C0] text-white font-semibold py-3 rounded-lg transition-colors disabled:opacity-50"
             >
-              {loading ? "Sending..." : "Send OTP"}
+              {loading ? "Checking..." : "✅ Maine Verify Kar Diya"}
             </button>
-          </form>
-        )}
 
-        {/* ── OTP VERIFY ── */}
-        {activeTab === "otp" && (
-          <form onSubmit={handleVerifyOTP} className="space-y-6">
             <button
-              type="button"
-              onClick={() => setActiveTab("phone")}
-              className="flex items-center text-[#2979FF] mb-2"
+              onClick={handleResend}
+              className="w-full bg-[#1E1E1E] hover:bg-[#2A2A2A] text-white font-medium py-3 rounded-lg flex items-center justify-center gap-2 transition-colors"
             >
-              <ArrowLeft size={18} className="mr-1" /> Back
+              <RefreshCw size={16} />
+              Dobara Email Bhejo
             </button>
-            <h2 className="text-xl font-bold">Enter OTP</h2>
-            <p className="text-[#8A8A8A] text-sm">
-              Sent to {phoneNumber.startsWith("+") ? phoneNumber : `+91${phoneNumber}`}
-            </p>
-            <div className="flex justify-between gap-2">
-              {otp.map((digit, i) => (
-                <input
-                  key={i}
-                  ref={(el) => (otpRefs.current[i] = el)}
-                  type="number"
-                  maxLength={1}
-                  value={digit}
-                  onChange={(e) => handleOtpChange(i, e.target.value)}
-                  onKeyDown={(e) => handleOtpKeyDown(i, e)}
-                  className="w-12 h-12 text-center text-xl bg-[#1E1E1E] border border-[#2A2A2A] rounded-lg text-white focus:outline-none focus:border-[#2979FF]"
-                />
-              ))}
-            </div>
-            {error && <p className="text-red-500 text-sm">{error}</p>}
-            <button
-              type="submit"
-              disabled={loading || otp.join("").length < 6}
-              className="w-full bg-[#2979FF] hover:bg-[#1565C0] text-white font-semibold py-3 rounded-lg transition-colors disabled:opacity-50"
-            >
-              {loading ? "Verifying..." : "Verify OTP"}
-            </button>
-          </form>
-        )}
 
-        {/* ── PROFILE SETUP ── */}
-        {activeTab === "profile" && (
-          <form onSubmit={handleProfileSetup} className="space-y-4">
-            <h2 className="text-xl font-bold">Setup Profile</h2>
-            <p className="text-[#8A8A8A] text-sm">
-              Tell us your name to get started!
-            </p>
-            <div className="relative">
-              <User className="absolute left-3 top-3 text-[#8A8A8A]" size={20} />
-              <input
-                type="text"
-                placeholder="Your Name"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                className="w-full bg-[#1E1E1E] border border-[#2A2A2A] rounded-lg py-3 pl-10 pr-4 text-white placeholder-[#8A8A8A] focus:outline-none focus:border-[#2979FF]"
-                required
-              />
-            </div>
-            {error && <p className="text-red-500 text-sm">{error}</p>}
             <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-[#2979FF] hover:bg-[#1565C0] text-white font-semibold py-3 rounded-lg transition-colors disabled:opacity-50"
+              onClick={() => {
+                setActiveTab("login");
+                setError("");
+              }}
+              className="flex items-center justify-center text-[#2979FF] text-sm w-full"
             >
-              {loading ? "Saving..." : "Start Chatting →"}
+              <ArrowLeft size={16} className="mr-1" /> Back to Login
             </button>
-          </form>
+          </div>
         )}
 
         {/* ── LOGIN / SIGNUP ── */}
@@ -303,25 +217,28 @@ export default function Auth() {
             <div className="flex bg-[#1E1E1E] rounded-lg p-1">
               <button
                 className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${activeTab === "login" ? "bg-[#2979FF] text-white" : "text-[#8A8A8A]"}`}
-                onClick={() => setActiveTab("login")}
+                onClick={() => { setActiveTab("login"); setError(""); }}
               >
                 Login
               </button>
               <button
                 className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${activeTab === "signup" ? "bg-[#2979FF] text-white" : "text-[#8A8A8A]"}`}
-                onClick={() => setActiveTab("signup")}
+                onClick={() => { setActiveTab("signup"); setError(""); }}
               >
                 Sign Up
               </button>
             </div>
 
             {error && (
-              <div className="bg-red-500/10 border border-red-500/50 text-red-500 text-sm p-3 rounded-lg">
+              <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-sm p-3 rounded-xl">
                 {error}
               </div>
             )}
 
-            <form onSubmit={handleEmailAuth} className="space-y-4">
+            <form
+              onSubmit={activeTab === "login" ? handleLogin : handleSignup}
+              className="space-y-4"
+            >
               <div className="relative">
                 <Mail className="absolute left-3 top-3 text-[#8A8A8A]" size={20} />
                 <input
@@ -337,7 +254,7 @@ export default function Auth() {
                 <Key className="absolute left-3 top-3 text-[#8A8A8A]" size={20} />
                 <input
                   type="password"
-                  placeholder="Password"
+                  placeholder="Password (min 6 characters)"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full bg-[#1E1E1E] border border-[#2A2A2A] rounded-lg py-3 pl-10 pr-4 text-white placeholder-[#8A8A8A] focus:outline-none focus:border-[#2979FF]"
@@ -349,7 +266,11 @@ export default function Auth() {
                 disabled={loading}
                 className="w-full bg-[#2979FF] hover:bg-[#1565C0] text-white font-semibold py-3 rounded-lg transition-colors disabled:opacity-50"
               >
-                {loading ? "Please wait..." : activeTab === "login" ? "Sign In" : "Create Account"}
+                {loading
+                  ? "Please wait..."
+                  : activeTab === "login"
+                  ? "Sign In"
+                  : "Create Account"}
               </button>
             </form>
 
@@ -372,15 +293,6 @@ export default function Auth() {
                 <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
               </svg>
               <span>Continue with Google</span>
-            </button>
-
-            {/* Phone OTP */}
-            <button
-              onClick={() => setActiveTab("phone")}
-              className="w-full bg-[#1E1E1E] text-white font-semibold py-3 rounded-lg flex items-center justify-center space-x-2 hover:bg-[#2A2A2A] transition-colors"
-            >
-              <Phone size={20} className="text-[#2979FF]" />
-              <span>Continue with Phone (OTP)</span>
             </button>
           </>
         )}

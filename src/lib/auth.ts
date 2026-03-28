@@ -8,14 +8,9 @@ import {
   signOut,
   onAuthStateChanged,
   updateProfile as firebaseUpdateProfile,
-  RecaptchaVerifier,
-  signInWithPhoneNumber,
-  ConfirmationResult,
+  sendEmailVerification as firebaseSendEmailVerification,
   User,
 } from "firebase/auth";
-
-// Store confirmation result globally
-let confirmationResult: ConfirmationResult | null = null;
 
 // --- Google Login ---
 export const loginWithGoogle = async () => {
@@ -41,43 +36,16 @@ export const loginWithEmail = (email: string, pass: string) =>
 export const registerWithEmail = (email: string, pass: string) =>
   createUserWithEmailAndPassword(auth, email, pass);
 
-// --- Phone OTP ---
-export const sendPhoneOTP = async (
-  phoneNumber: string,
-  recaptchaContainerId: string
-) => {
-  // Clear existing recaptcha if any
-  try {
-    const existing = (window as any).recaptchaVerifier;
-    if (existing) {
-      existing.clear();
-      (window as any).recaptchaVerifier = null;
-    }
-  } catch {}
+// --- Email Verification ---
+export const sendEmailVerification = (user: User) =>
+  firebaseSendEmailVerification(user, {
+    url: "https://chat.nix-os.in",
+  });
 
-  const recaptchaVerifier = new RecaptchaVerifier(
-    auth,
-    recaptchaContainerId,
-    { size: "invisible" }
-  );
-
-  (window as any).recaptchaVerifier = recaptchaVerifier;
-
-  confirmationResult = await signInWithPhoneNumber(
-    auth,
-    phoneNumber,
-    recaptchaVerifier
-  );
-
-  return confirmationResult;
-};
-
-export const verifyPhoneOTP = async (otp: string) => {
-  if (!confirmationResult) {
-    throw new Error("OTP not sent. Please request OTP first.");
-  }
-  return confirmationResult.confirm(otp);
-};
+export const resendVerificationEmail = (user: User) =>
+  firebaseSendEmailVerification(user, {
+    url: "https://chat.nix-os.in",
+  });
 
 // --- Other ---
 export const logout = () => signOut(auth);
@@ -87,7 +55,7 @@ export const subscribeToAuth = (callback: (user: User | null) => void) =>
 
 export const updateUserProfile = (
   user: User,
-  data: { displayName?: string; photoURL?: string }
+  data: { displayName?: string; photoURL?: string },
 ) => firebaseUpdateProfile(user, data);
 
 export const getCurrentUser = () => auth.currentUser;
