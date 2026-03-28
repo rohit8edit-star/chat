@@ -1,0 +1,9 @@
+{
+  "name": "NixChat",
+  "description": "A real-time mobile-first chat application alternative to WhatsApp.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}
